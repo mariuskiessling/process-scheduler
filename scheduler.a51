@@ -20,31 +20,33 @@ EXTRN CODE (printToSerial)
 ; ------------------------------------------------------------------------------
 ; Published symbols
 ; ------------------------------------------------------------------------------
-PUBLIC main
 PUBLIC execConsole
 PUBLIC execProcessA
 PUBLIC execProcessB
 PUBLIC execProcessX
 PUBLIC finishProcessA
+PUBLIC killProcessB
 
 
 ; ------------------------------------------------------------------------------
 ; Stack definition
 ; ------------------------------------------------------------------------------
 ?STACK          			SEGMENT IDATA
-							RSEG    ?STACK
-							DS      10
+	RSEG    ?STACK
+	DS      10
 
 
 ; ------------------------------------------------------------------------------
 ; Data segment and variable definition
 ; ------------------------------------------------------------------------------
 schedulerData 				SEGMENT DATA
-							RSEG    schedulerData
+	RSEG    schedulerData
+stackReservedSpace:			DS  	10
 processConsoleInformation:	DS  	3	; Console process meta data
 processAInformation:		DS  	3	; Process A meta data
 processBInformation:		DS  	3	; Process B meta data
 processXInformation:		DS  	3	; Process X meta data
+processTimeCounter:			DS		1	; Counter for each process timer
 currentProcess:				DS  	1	; Incrementing value representing the
 										; current process
 processStorage:				DS		96	; Holds the registers and stack of each
@@ -80,14 +82,14 @@ LJMP init
 ; Scheduler timer interrupt jump definition
 ; ------------------------------------------------------------------------------
 CSEG AT 1BH
-LJMP schedulerInterrupt
+LJMP timerTimeout
 
 
 ; ------------------------------------------------------------------------------
 ; Code segement definition
 ; ------------------------------------------------------------------------------
 schedulerCode SEGMENT CODE
-              RSEG schedulerCode
+			  RSEG schedulerCode
 
 
 ; ================================ Module code =================================
@@ -98,9 +100,50 @@ schedulerCode SEGMENT CODE
 init:
 	MOV SP, #?STACK-1 		; Assign stack
 	SETB wdt				; Disable watchdog
-    SETB swdt				; Disable watchdog
+	SETB swdt				; Disable watchdog
+
+	MOV TMOD, #00010001b
+	;MOV A, IP0
+	;SETB ACC.1
+	;MOV IP0, A
+
+	MOV A, IP1
+	SETB ACC.1
+	MOV IP1, A
+
+	MOV currentProcess, #-1
 
 	JMP createProcessTable	; Trigger process tabel creation
+
+
+; ------------------------------------------------------------------------------
+; Checks if set amount of cycles (priority) is reached for the currently
+; executed process. If the amount of necessary cycles is reached the scheduler
+; interrupt routine is called. If the amount is not yet reached the process is
+; restored and executed until the next timer interrupt.
+; ------------------------------------------------------------------------------
+timerTimeout:
+	MOV A, processTimeCounter
+	CLR TR1
+	JNZ returnToCurrentProcess
+	LJMP schedulerInterrupt
+
+
+; ------------------------------------------------------------------------------
+; Decrements priority counter, restores scheduler timer and returns to position
+; in subprocess before interrupt was fired.
+; ------------------------------------------------------------------------------
+returnToCurrentProcess:
+	DEC A
+	MOV processTimeCounter, A
+
+	CLR TR1
+	MOV TL1, #0xE0
+	MOV TH1, #0xB1
+	SETB TR1
+	SETB ET1
+	SETB EAL
+	RETI
 
 ; ------------------------------------------------------------------------------
 ; Interrupt handler to process the interrupt executed by hardware timer 1.
@@ -109,6 +152,9 @@ init:
 ; variable.
 ; ------------------------------------------------------------------------------
 schedulerInterrupt:
+	MOV processTimeCounter, #0
+	CLR TR1
+
 	MOV R7, currentProcess
 	CJNE R7, #0, saveProcessAState
 	MOV processStorage + 0, R0
@@ -252,13 +298,6 @@ saveProcessXState:
 	LJMP circleProcess
 
 
-main:
-	;CALL startProcessA
-	NOP
-	JMP startProcessB
-    JMP main
-
-
 ; ------------------------------------------------------------------------------
 ; START CONSOLE PROCESS
 ; Checks if the console process is scheduled to be started. If it is scheduled
@@ -272,8 +311,19 @@ evaluateConsoleProcess:
 
 	MOV processConsoleInformation + 0, #1	; Set console process meta data
 											; status to running
-	CALL startTimer							; Call for the timer to be started
-	LJMP startConsole						; Jump to start of console process
+
+	MOV processTimeCounter, processConsoleInformation + 8
+
+	MOV TL1, #0xE0							; Reset timer
+	MOV TH1, #0xB1							; Reset timer
+	SETB TR1								; Reset timer
+	SETB ET1								; Reset timer
+	SETB EAL								; Reset timer
+
+	MOV DPTR, #startConsole
+	PUSH DPL
+	PUSH DPH
+	RETI
 
 
 ; ------------------------------------------------------------------------------
@@ -310,8 +360,16 @@ isConsoleRunning:
 	MOV DPH, processStorage + 22
 	MOV DPL, processStorage + 23
 
-	RETI							; Jump back to position the scheduler's
-									; interrupt occurred
+	MOV processTimeCounter, processConsoleInformation + 8
+
+	MOV TL1, #0xE0	; Reset timer
+	MOV TH1, #0xB1	; Reset timer
+	SETB TR1		; Reset timer
+	SETB ET1		; Reset timer
+	SETB EAL		; Reset timer
+
+	RETI			; Jump back to position the scheduler's
+					; interrupt occurred
 
 
 ; ------------------------------------------------------------------------------
@@ -351,10 +409,26 @@ evaluateProcessA:
 
 	CJNE R7, #2, isProcessARunning
 	MOV processAInformation + 0, #1
-	;CALL startTimer
-	LJMP startProcessA
-	;starte ProzessA Methode
 
+	MOV processTimeCounter, processAInformation + 8
+
+	MOV TL1, #0xE0					; Reset timer
+	MOV TH1, #0xB1					; Reset timer
+	SETB TR1						; Reset timer
+	SETB ET1						; Reset timer
+	SETB EAL						; Reset timer
+
+	MOV DPTR, #startProcessA
+	PUSH DPL
+	PUSH DPH
+	RETI
+
+
+; ------------------------------------------------------------------------------
+; RECOVER CONSOLE PROCESS
+; Checks if the console process is running. If it is started the console's
+; registers and stack are restored and
+; ------------------------------------------------------------------------------
 isProcessARunning:
 	CJNE R7, #1, circleProcess
 
@@ -385,9 +459,24 @@ isProcessARunning:
 	MOV DPH, processStorage + 46
 	MOV DPL, processStorage + 47
 
-	RETI							; Jump back to position the scheduler's
-									; interrupt occurred
+	MOV processTimeCounter, processAInformation + 8
 
+	MOV TL1, #0xE0		; Reset timer
+	MOV TH1, #0xB1		; Reset timer
+	SETB TR1			; Reset timer
+	SETB ET1			; Reset timer
+	SETB EAL			; Reset timer
+
+	RETI				; Jump back to position the scheduler's
+						; interrupt occurred
+
+
+; ------------------------------------------------------------------------------
+; START PROCESS B
+; Checks if process B is scheduled to be started. If it is scheduled the
+; process's meta data is updated, set to running, a timer started and the
+; process's start label executed.
+; ------------------------------------------------------------------------------
 evaluateProcessB:
 	MOV R7, currentProcess
 	CJNE R7, #2, evaluateProcessX
@@ -396,12 +485,35 @@ evaluateProcessB:
 	CJNE R7, #2, isProcessBRunning
 
 	MOV processBInformation + 0, #1
-	;CALL startTimer
-	LJMP startProcessB
-	;start ProzessB Methode
 
+	MOV processTimeCounter, processBInformation + 8
+
+	MOV TL1, #0xE0		; Reset timer
+	MOV TH1, #0xB1		; Reset timer
+	SETB TR1			; Reset timer
+	SETB ET1			; Reset timer
+	SETB EAL			; Reset timer
+
+	MOV DPTR, #startProcessB
+	PUSH DPL
+	PUSH DPH
+	RETI
+
+
+; ------------------------------------------------------------------------------
+; Helper label to enable longer jumps executed by the CJNE command.
+; ------------------------------------------------------------------------------
+circleProcessShortJumpHelper:
+	LJMP circleProcess
+
+
+; ------------------------------------------------------------------------------
+; RECOVER PROCESS B
+; Checks if the process B is running. If it is started the process's registers
+; and stack are restored and
+; ------------------------------------------------------------------------------
 isProcessBRunning:
-	CJNE R7, #1, circleProcess
+	CJNE R7, #1, circleProcessShortJumpHelper
 
 	MOV R0, processStorage + 48
 	MOV R1, processStorage + 49
@@ -430,9 +542,24 @@ isProcessBRunning:
 	MOV DPH, processStorage + 70
 	MOV DPL, processStorage + 71
 
-	RETI							; Jump back to position the scheduler's
-									; interrupt occurred
+	MOV processTimeCounter, processBInformation + 8
 
+	MOV TL1, #0xE0		; Reset timer
+	MOV TH1, #0xB1		; Reset timer
+	SETB TR1			; Reset timer
+	SETB ET1			; Reset timer
+	SETB EAL			; Reset timer
+
+	RETI				; Jump back to position the scheduler's
+						; interrupt occurred
+
+
+; ------------------------------------------------------------------------------
+; START PROCESS X
+; Checks if process X is scheduled to be started. If it is scheduled the
+; process's meta data is updated, set to running, a timer started and the
+; process's start label executed.
+; ------------------------------------------------------------------------------
 evaluateProcessX:
 	MOV R7, currentProcess
 	CJNE R7, #3, resetProcessCircle
@@ -441,10 +568,26 @@ evaluateProcessX:
 	CJNE R7, #2, isProcessXRunning
 
 	MOV processXInformation + 0, #1
-	;CALL startTimer
-	LJMP fkt_text
-	;starte ProzessX Methode
 
+	MOV processTimeCounter, processXInformation + 8
+
+	MOV TL1, #0xE0		; Reset timer
+	MOV TH1, #0xB1		; Reset timer
+	SETB TR1			; Reset timer
+	SETB ET1			; Reset timer
+	SETB EAL			; Reset timer
+
+	MOV DPTR, #fkt_text
+	PUSH DPL
+	PUSH DPH
+	RETI
+
+
+; ------------------------------------------------------------------------------
+; RECOVER PROCESS X
+; Checks if the process X is running. If it is started the process's registers
+; and stack are restored and
+; ------------------------------------------------------------------------------
 isProcessXRunning:
 	CJNE R7, #1, resetProcessCircle
 
@@ -475,65 +618,105 @@ isProcessXRunning:
 	MOV DPH, processStorage + 94
 	MOV DPL, processStorage + 95
 
-	RETI							; Jump back to position the scheduler's
-									; interrupt occurred
+	MOV processTimeCounter, processXInformation + 8
+
+	MOV TL1, #0xE0		; Reset timer
+	MOV TH1, #0xB1		; Reset timer
+	SETB TR1			; Reset timer
+	SETB ET1			; Reset timer
+	SETB EAL			; Reset timer
+
+	RETI				; Jump back to position the scheduler's
+						; interrupt occurred
 
 
+; ------------------------------------------------------------------------------
+; Jumps back to beginning of the scheduler's process cycle.
+; ------------------------------------------------------------------------------
 resetProcessCircle:
 	MOV currentProcess, #-1
 	JMP circleProcess
 
 
+; ------------------------------------------------------------------------------
+; Builds the process meta information table that holds the state and priority
+; of each process. The table stores two information about each process:
+; - State (located at offset 0)
+; - Process timer timeout / priority (located at offset 8)
+;
+; The state can hold these values:
+; - 0 = Not running
+; - 1 = Currently running
+; - 2 = Ready (to be started during the next scheduling cycle)
+;
+; The process timer timeout holds an integer representing a factor of 10ms.
+; Thus a priority of '10' guarantees 100ms of process execution.
+; ------------------------------------------------------------------------------
 createProcessTable:
-	MOV currentProcess, #-1
+	MOV processConsoleInformation + 0,  #2
+	MOV processConsoleInformation + 8,  #10
 
-	MOV processConsoleInformation + 0,  #2		; State (0 = Not running, 1 = Running, 2 = Ready)
-	MOV processConsoleInformation + 8,  #0		; PC
-	MOV processConsoleInformation + 16, #0		; Time slot width
+	MOV processAInformation + 0,  #0
+	MOV processAInformation + 8,  #10
 
-	MOV processAInformation + 0,  #0		; State (0 = Not running, 1 = Running, 2 = Ready)
-	MOV processAInformation + 8,  #0		; PC
-	MOV processAInformation + 16, #0		; Time slot width
+	MOV processBInformation + 0,  #0
+	MOV processBInformation + 8,  #20
 
-	MOV processBInformation + 0,  #0		; State (0 = Not running, 1 = Running, 2 = Ready)
-	MOV processBInformation + 8,  #0		; PC
-	MOV processBInformation + 16, #0		; Time slot width
-
-	MOV processXInformation + 0,  #0		; State (0 = Not running, 1 = Running, 2 = Ready)
-	MOV processXInformation + 8,  #0		; PC
-	MOV processXInformation + 16, #0		; Time slot width
+	MOV processXInformation + 0,  #0
+	MOV processXInformation + 8,  #10
 
 	LJMP circleProcess
-	;RET
 
 
+; ------------------------------------------------------------------------------
+; Signals the scheduler to start the console process during the next scheduling
+; cycle.
+; ------------------------------------------------------------------------------
 execConsole:
 	MOV processConsoleInformation + 0, #2
 
 
+; ------------------------------------------------------------------------------
+; Signals the scheduler to start process A during the next scheduling cycle.
+; ------------------------------------------------------------------------------
 execProcessA:
 	MOV processAInformation + 0, #2
 	RET
 
+
+; ------------------------------------------------------------------------------
+; Signals the scheduler to start process B during the next scheduling cycle.
+; ------------------------------------------------------------------------------
 execProcessB:
 	MOV processBInformation + 0, #2
 	RET
 
+
+; ------------------------------------------------------------------------------
+; Signals the scheduler to start process X during the next scheduling cycle.
+; ------------------------------------------------------------------------------
 execProcessX:
 	MOV processXInformation + 0, #2
 	RET
 
+
+; ------------------------------------------------------------------------------
+; Signals the scheduler that process A is done executing. Process A however
+; still executes until it reaches its maximum execution time.
+; ------------------------------------------------------------------------------
 finishProcessA:
 	MOV processAInformation + 0, #0
 	RET
 
-startTimer:
-	MOV TMOD,#010h
-	MOV TH1, #032h	; High Bit setzen (50) (100 = 05ah, größere Zahl, weniger Zeit)
-	MOV TL1, #032h	; Low Bit setzen 	(50)
-	SETB TR1    	; Timer 0 starten
-	SETB ET1		; Interrupt f�r Timer 0 aktivieren
-	SETB EAL		; Globaler Interrupt aktivieren
+
+; ------------------------------------------------------------------------------
+; Signals the scheduler to kill process B. Updates the meta information of
+; process B and stops any timer that was used by process B.
+; ------------------------------------------------------------------------------
+killProcessB:
+	MOV processBInformation + 0, #0
+	CLR TR0
+	CLR ET0
 	RET
 
 END
