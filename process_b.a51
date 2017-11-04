@@ -1,59 +1,79 @@
 $NOMOD51
 #include <Reg517a.inc>
 
+; ------------------------------------------------------------------------------
+; Module name
+; ------------------------------------------------------------------------------
 Name ProcessB
 
-EXTRN CODE (main, printToSerial)
 
+; ------------------------------------------------------------------------------
+; Imported symbols from other modules
+; ------------------------------------------------------------------------------
+EXTRN CODE (printToSerial)
+
+
+; ------------------------------------------------------------------------------
+; Published symbols
+; ------------------------------------------------------------------------------
 PUBLIC startProcessB
 
 
+; ------------------------------------------------------------------------------
+; Process B timer interrupt jump definition
+; ------------------------------------------------------------------------------
+CSEG AT 00BH
+LJMP timerInterrupt
 
-; ============================================
-; Interrupt Handler
-; ============================================
 
-CSEG AT 0BH
-LJMP interrupt1
-
+; ------------------------------------------------------------------------------
+; Code segement definition
+; ------------------------------------------------------------------------------
 processBCode SEGMENT CODE
 			 RSEG processBCode
 
-interrupt1:
-INC R0
-CJNE R0, #20, wait
-MOV A, #"#"
-LCALL printToSerial
-MOV R0, #00
+
+; ================================ Module code =================================
+
+ ; ------------------------------------------------------------------------------
+ ; Starts process B and configures its timer
+ ; ------------------------------------------------------------------------------
+ startProcessB:
+ 	MOV R0,#00
+ 	MOV TL0, #0xE0
+ 	MOV TH0, #0xB1
+ 	SETB TR0
+ 	SETB ET0
+ 	SETB EAL
+ 	JMP waitLoop
 
 
-; ===============================================
-; Interrupt Counter
-; ===============================================
-wait:
+; ------------------------------------------------------------------------------
+; Checks if 10 interrupts have been triggered. If interrupt count has been
+; reached '#' is printed the interrupt count reset.
+; ------------------------------------------------------------------------------
+timerInterrupt:
+	INC R0
+	CJNE R0, #10, returnOperation
+	MOV A, #"#"
+	LCALL printToSerial
+	MOV R0, #00
+
+
+; ------------------------------------------------------------------------------
+; Triggers RETI to return to normal operation of process B and wait for the next
+; interrupt.
+; ------------------------------------------------------------------------------
+returnOperation:
 	RETI
 
-;SETB PSW.4 ; Lege Regsiter 3 als Speicher fest
 
-
-; ===============================================
-;
-; ===============================================
-startProcessB:
-	MOV R0,#00
-	MOV TMOD,#001h
-	MOV TH0, #03Ch	; High Bit setzen
-	MOV TL0, #0AFh	; Low Bit setzen
-	SETB TR0    	; Timer 0 starten
-	SETB ET0		; Interrupt f�r Timer 0 aktivieren
-	SETB EAL		; Globaler Interrupt aktivieren
-
-loop:
-    NOP
-    SETB wdt
-    SETB swdt
-    JMP loop
-
-
+; ------------------------------------------------------------------------------
+; Loops through empty loop until the next timer interrupt is fired.
+; ------------------------------------------------------------------------------
+waitLoop:
+	SETB wdt		; Disable watchdog
+	SETB swdt		; Disable watchdog
+	JMP waitLoop
 
 END
