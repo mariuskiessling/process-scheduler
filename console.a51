@@ -14,6 +14,7 @@ EXTRN CODE (printToSerial)
 EXTRN CODE (execProcessA)
 EXTRN CODE (execProcessB)
 EXTRN CODE (execProcessX)
+EXTRN CODE (killProcessB)
 
 
 ; ------------------------------------------------------------------------------
@@ -32,61 +33,96 @@ consoleProcessCode	SEGMENT CODE
 ; ================================ Module code =================================
 
 ; ------------------------------------------------------------------------------
-; Start procedure for console process
+; Start procedure for the console process
 ; ------------------------------------------------------------------------------
 startConsole:
-	NOP
-	CLR SM0             	; Setze Bit auf 0, 8-Bit UART, Baudrate variable einstellbar
-	SETB SM1             	; Setze Bit auf 1
-	SETB REN0             	; Setze Bit auf 1, Empfang �ber serielle Schnittstelle zulassen
-	SETB BD             	; Setze Bit auf 1, Baudrate durch Bautratengenerator
-	MOV S0RELH, #0EFH
-	MOV S0RELL, #0F3H
-	JMP waitForInput
+    NOP
+    CLR SM0                ; Setup serial interface
+    SETB SM1               ; Setup serial interface
+    SETB REN0              ;Enable serial receive
+    SETB BD                ; Setup serial interface
+    MOV S0RELH, #0EFH      ;
+    MOV S0RELL, #0F3H
+    JMP waitForInput
 
 
 ; ------------------------------------------------------------------------------
 ; Waits for any input and triggers the checking of the entered character
 ; ------------------------------------------------------------------------------
 waitForInput:
-	SETB wdt                ; Disable watchdog
+    SETB wdt                ; Disable watchdog
     SETB swdt               ; Disable watchdog
     JNB RI0, waitForInput
     MOV A, S0BUF            ; Write buffer to A
     CLR RI0
 
     ; OPTIONAL DEBUG
-	; CALL printToSerial
+    ; CALL printToSerial
 
     CJNE A, #'a', inputIsNotA
 
 ; ------------------------------------------------------------------------------
-; Waits for any input and triggers the checking of the entered character
+; Tells the scheduler to start process A. Is called if the entered character is
+; an 'a'.
 ; ------------------------------------------------------------------------------
 inputIsA:
-    CALL execProcessA       ; Tell scheduler to start process A
+    CALL execProcessA   ; Tell scheduler to start process A
     SJMP waitForInput
 
+
+; ------------------------------------------------------------------------------
+; Checks if the entered character is not a 'b'. If the given input is a 'b' the
+; next label is executed.
+; ------------------------------------------------------------------------------
 inputIsNotA:
     CJNE A, #'b', inputIsNotB
 
+
+; ------------------------------------------------------------------------------
+; Tells the scheduler to start process B. Is called if the entered character is
+; an 'b'.
+; ------------------------------------------------------------------------------
 inputIsB:
-    CALL execProcessB       ; Tell scheduler to start process B
+    CALL execProcessB   ; Tell scheduler to start process B
     SJMP waitForInput
 
+
+; ------------------------------------------------------------------------------
+; Checks if the entered character is not a 'c'. If the given input is a 'c' the
+; next label is executed.
+; ------------------------------------------------------------------------------
 inputIsNotB:
     CJNE A, #'c', inputIsNotC
 
+
+; ------------------------------------------------------------------------------
+; Tells the scheduler to kill process B. Is called if the entered character is
+; an 'c'.
+; ------------------------------------------------------------------------------
 inputIsC:
-    nop                     ; Tell scheduler to stop process B
+    CALL killProcessB   ; Tell scheduler to stop process B
     SJMP waitForInput
 
+
+; ------------------------------------------------------------------------------
+; Checks if the entered character is not a 'z'. If the given input is a 'z' the
+; next label is executed.
+; ------------------------------------------------------------------------------
 inputIsNotC:
     CJNE A, #'z', inputIsNotZ
 
+
+; ------------------------------------------------------------------------------
+; Tells the scheduler to start process Z. Is called if the entered character is
+; an 'z'.
+; ------------------------------------------------------------------------------
 inputIsZ:
-    nop            ; Starte Text Prozess
+    CALL execProcessX
     SJMP waitForInput
+
+; ------------------------------------------------------------------------------
+; Returns to waiting for the next input. 
+; ------------------------------------------------------------------------------
 inputIsNotZ:
     LJMP waitForInput
 
