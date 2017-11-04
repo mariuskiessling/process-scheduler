@@ -45,5 +45,11 @@ startProcessA:
 	CALL printToSerial
 
     CALL finishProcessA
+    JMP finishLoop
+
+finishLoop:
+    SETB wdt                ; Disable watchdog
+    SETB swdt               ; Disable watchdog
+    JMP finishLoop
 
 END
