@@ -39,7 +39,7 @@ startConsole:
     NOP
     CLR SM0                ; Setup serial interface
     SETB SM1               ; Setup serial interface
-    SETB REN0              ;Enable serial receive
+    SETB REN0              ; Enable serial receive
     SETB BD                ; Setup serial interface
     MOV S0RELH, #0EFH      ;
     MOV S0RELL, #0F3H
@@ -120,8 +120,9 @@ inputIsZ:
     CALL execProcessX
     SJMP waitForInput
 
+
 ; ------------------------------------------------------------------------------
-; Returns to waiting for the next input. 
+; Returns to waiting for the next input.
 ; ------------------------------------------------------------------------------
 inputIsNotZ:
     LJMP waitForInput
